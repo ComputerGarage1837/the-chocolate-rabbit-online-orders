@@ -2,7 +2,7 @@
 /**
  * Plugin Name: The Chocolate Rabbit Orders App
  * Description: Secure owner-app access to WooCommerce orders, refunds, and new-order push notifications.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Computer Garage
  * Requires Plugins: woocommerce
  */
@@ -24,6 +24,7 @@ final class TCR_Orders_App {
         add_action('admin_post_tcr_orders_save', [self::class, 'save_settings']);
         add_action('admin_post_tcr_orders_pair', [self::class, 'new_pairing_code']);
         add_action('admin_post_tcr_orders_revoke', [self::class, 'revoke']);
+        add_action('admin_post_tcr_orders_test_push', [self::class, 'test_push']);
         add_action('woocommerce_new_order', [self::class, 'queue_notification'], 20, 1);
         add_action('tcr_orders_send_new_order_push', [self::class, 'send_new_order_notification'], 10, 1);
     }
@@ -233,13 +234,17 @@ final class TCR_Orders_App {
         ?>
         <div class="wrap"><h1>The Chocolate Rabbit Online Orders</h1>
         <?php if (isset($_GET['updated'])): ?><div class="notice notice-success"><p>Settings saved.</p></div><?php endif; ?>
+        <?php if (isset($_GET['test_push'])): ?><div class="notice <?php echo $_GET['test_push'] === 'sent' ? 'notice-success' : 'notice-error'; ?>"><p><?php echo $_GET['test_push'] === 'sent' ? 'Test notification sent to the paired phone.' : 'Test notification could not be sent. Check Firebase settings and the paired phone.'; ?></p></div><?php endif; ?>
         <div class="card" style="max-width:760px;padding:20px"><h2>Owner phone</h2><p>Status: <strong><?php echo $paired ? 'Paired' : 'Not paired'; ?></strong></p>
         <?php if (is_string($code) && $expiry > time()): ?><p>Enter this one-time code in the app. It expires in 10 minutes.</p><div style="font-size:34px;font-weight:800;letter-spacing:.18em;background:#fff4c8;padding:18px;display:inline-block"><?php echo esc_html($code); ?></div><?php endif; ?>
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:16px"><?php wp_nonce_field('tcr_orders_pair'); ?><input type="hidden" name="action" value="tcr_orders_pair"><button class="button button-primary">Generate new pairing code</button></form>
         <?php if ($paired): ?><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:10px" onsubmit="return confirm('Revoke the paired phone?')"><?php wp_nonce_field('tcr_orders_revoke'); ?><input type="hidden" name="action" value="tcr_orders_revoke"><button class="button">Revoke paired phone</button></form><?php endif; ?></div>
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="card" style="max-width:760px;padding:20px;margin-top:18px"><?php wp_nonce_field('tcr_orders_save'); ?><input type="hidden" name="action" value="tcr_orders_save"><h2>Push notifications (Firebase)</h2><p>Create an Android app in Firebase for package <code>ca.thechocolaterabbit.onlineorders</code>. Paste the four public Android values and the service-account JSON below. The private service account stays only in WordPress.</p>
         <?php foreach (['apiKey'=>'API key','applicationId'=>'Application ID','projectId'=>'Project ID','senderId'=>'Sender ID'] as $key=>$label): ?><p><label><strong><?php echo esc_html($label); ?></strong><br><input class="regular-text" name="public[<?php echo esc_attr($key); ?>]" value="<?php echo esc_attr((string)($public[$key] ?? '')); ?>"></label></p><?php endforeach; ?>
-        <p><label><strong>Firebase service-account JSON</strong><br><textarea name="service_json" rows="10" class="large-text code" placeholder="Paste the full JSON file here. Leave blank to keep the saved credential."></textarea></label></p><p><button class="button button-primary">Save notification settings</button></p></form></div>
+        <p><label><strong>Firebase service-account JSON</strong><br><textarea name="service_json" rows="10" class="large-text code" placeholder="Paste the full JSON file here. Leave blank to keep the saved credential."></textarea></label></p><p><button class="button button-primary">Save notification settings</button></p></form>
+        <div class="card" style="max-width:760px;padding:20px;margin-top:18px"><h2>Notification check</h2>
+        <p>Firebase: <strong><?php echo self::firebase_ready($firebase) ? 'Configured' : 'Needs setup'; ?></strong><br>Owner phone: <strong><?php echo get_option(self::DEVICE, '') ? 'Registered for push' : 'Not registered for push'; ?></strong></p>
+        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><?php wp_nonce_field('tcr_orders_test_push'); ?><input type="hidden" name="action" value="tcr_orders_test_push"><button class="button button-primary" <?php disabled(!self::firebase_ready($firebase) || !get_option(self::DEVICE, '')); ?>>Send test notification</button></form></div></div>
         <?php
     }
 
@@ -252,6 +257,16 @@ final class TCR_Orders_App {
         if ($raw !== '') { $decoded = json_decode($raw, true); if (!is_array($decoded) || empty($decoded['client_email']) || empty($decoded['private_key']) || empty($decoded['project_id'])) wp_die('The Firebase service-account JSON is invalid.'); $service = ['client_email' => sanitize_email($decoded['client_email']), 'private_key' => (string)$decoded['private_key'], 'project_id' => sanitize_key($decoded['project_id'])]; }
         update_option(self::FIREBASE, ['public' => $public, 'service' => $service], false); delete_transient('tcr_orders_fcm_access');
         wp_safe_redirect(admin_url('admin.php?page=tcr-orders-app&updated=1')); exit;
+    }
+    public static function test_push(): void {
+        if (!current_user_can('manage_woocommerce')) wp_die('Forbidden', 403);
+        check_admin_referer('tcr_orders_test_push');
+        $firebase = self::firebase(); $device = (string)get_option(self::DEVICE, '');
+        $result = $device !== '' && self::firebase_ready($firebase)
+            ? self::fcm_send($device, ['data' => ['title' => 'Chocolate Rabbit test', 'body' => 'New-order notifications are ready.', 'orderId' => ''], 'android' => ['priority' => 'high']], $firebase)
+            : ['ok' => false];
+        if (!empty($result['invalid'])) delete_option(self::DEVICE);
+        wp_safe_redirect(admin_url('admin.php?page=tcr-orders-app&test_push=' . (!empty($result['ok']) ? 'sent' : 'failed'))); exit;
     }
     public static function new_pairing_code(): void {
         if (!current_user_can('manage_woocommerce')) wp_die('Forbidden', 403); check_admin_referer('tcr_orders_pair');

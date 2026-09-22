@@ -19,6 +19,7 @@ Owner-only Android order manager for The Chocolate Rabbit WooCommerce store.
 3. In WordPress, open **WooCommerce → Orders App**. Enter the Firebase API key, app ID, project ID, sender ID, and service-account JSON.
 4. Install `The-Chocolate-Rabbit-Online-Orders.apk` on the owner’s Android phone.
 5. In **WooCommerce → Orders App**, generate a pairing code. Enter the store address and code in the app.
+6. Return to **WooCommerce → Orders App**. Confirm that Firebase is configured and the owner phone is registered, then use **Send test notification**.
 
 The code expires after ten minutes and can be used once. Generating a new owner token replaces the old one. Use **Revoke paired phone** if the phone is lost or replaced.
 
@@ -43,4 +44,3 @@ The app limits refunds to the remaining refundable order balance. If **Refund th
 - `release/the-chocolate-rabbit-orders-app.zip`
 
 These binaries are attached to GitHub Releases instead of committed to Git.
-
