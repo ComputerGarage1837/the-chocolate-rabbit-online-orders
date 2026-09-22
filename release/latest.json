@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "packageName": "ca.thechocolaterabbit.onlineorders",
+  "versionCode": 1,
+  "versionName": "1.0.0",
+  "minSdk": 26,
+  "apkUrl": "https://github.com/ComputerGarage1837/the-chocolate-rabbit-online-orders/releases/download/v1.0.0/The-Chocolate-Rabbit-Online-Orders.apk",
+  "sha256": "c4f33b168b258d0a39c707727839566af8ed6896361ba7a7be080b6d3e9ccefa",
+  "certificateSha256": "759a2c04ae79c2037eb82b7503d3bd29a79b61b23e008c2d49f0561947486e7b",
+  "sizeBytes": 626054,
+  "publishedAt": "2026-09-22T00:00:00Z",
+  "releaseNotes": "Initial owner release with order management, status updates, notes, refunds, new-order push notifications, and secure one-time pairing."
+}

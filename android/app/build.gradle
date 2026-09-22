@@ -1,0 +1,50 @@
+plugins { id 'com.android.application' }
+
+def signingNames = ['TCR_ORDERS_KEYSTORE', 'TCR_ORDERS_STORE_PASSWORD', 'TCR_ORDERS_KEY_ALIAS', 'TCR_ORDERS_KEY_PASSWORD']
+def releaseSigningAvailable = signingNames.every { System.getenv(it)?.trim() }
+if (signingNames.any { System.getenv(it)?.trim() } && !releaseSigningAvailable) {
+    throw new GradleException('Provide all four TCR Orders signing environment variables, or none.')
+}
+
+android {
+    namespace 'ca.thechocolaterabbit.onlineorders'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'ca.thechocolaterabbit.onlineorders'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+    }
+    signingConfigs {
+        if (releaseSigningAvailable) {
+            release {
+                storeFile file(System.getenv('TCR_ORDERS_KEYSTORE'))
+                storePassword System.getenv('TCR_ORDERS_STORE_PASSWORD')
+                keyAlias System.getenv('TCR_ORDERS_KEY_ALIAS')
+                keyPassword System.getenv('TCR_ORDERS_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        debug { debuggable true }
+        release {
+            debuggable false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (releaseSigningAvailable) signingConfig signingConfigs.release
+        }
+    }
+    buildFeatures { buildConfig true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    lint { abortOnError true; checkReleaseBuilds true }
+}
+
+dependencies {
+    implementation 'androidx.activity:activity:1.9.3'
+    implementation 'androidx.core:core:1.15.0'
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'com.google.firebase:firebase-messaging:24.1.2'
+}
+
