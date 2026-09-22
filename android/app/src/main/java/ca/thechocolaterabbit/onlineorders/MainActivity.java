@@ -5,12 +5,17 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.widget.FrameLayout;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import androidx.activity.ComponentActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 public final class MainActivity extends ComponentActivity {
     private WebView webView;
@@ -19,8 +24,18 @@ public final class MainActivity extends ComponentActivity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        FrameLayout safeArea = new FrameLayout(this);
+        safeArea.setFitsSystemWindows(false);
+        safeArea.setBackgroundColor(android.graphics.Color.rgb(43, 19, 11));
         webView = new WebView(this);
-        setContentView(webView);
+        safeArea.addView(webView, new FrameLayout.LayoutParams(-1, -1));
+        ViewCompat.setOnApplyWindowInsetsListener(safeArea, (view, windowInsets) -> {
+            Insets bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return windowInsets;
+        });
+        setContentView(safeArea);
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(false);
@@ -65,4 +80,3 @@ public final class MainActivity extends ComponentActivity {
         super.onDestroy();
     }
 }
-

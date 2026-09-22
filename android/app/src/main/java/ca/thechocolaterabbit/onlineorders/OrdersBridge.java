@@ -22,7 +22,11 @@ public final class OrdersBridge {
 
     @JavascriptInterface public void request(String requestId, String action, String rawPayload) {
         if (destroyed || requestId == null || !requestId.matches("[A-Za-z0-9_-]{1,50}")) return;
-        if ("checkUpdate".equals(action)) { activity.runOnUiThread(updates::checkManually); return; }
+        if ("checkUpdate".equals(action)) {
+            activity.runOnUiThread(updates::checkManually);
+            reply(requestId, true, new JSONObject());
+            return;
+        }
         network.execute(() -> {
             try {
                 JSONObject payload = rawPayload == null || rawPayload.isEmpty() ? new JSONObject() : new JSONObject(rawPayload);

@@ -13,5 +13,4 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v3
       - working-directory: android
-        run: ./gradlew lintDebug assembleDebug
-
+        run: bash ./gradlew lintDebug assembleDebug
