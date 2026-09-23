@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "packageName": "ca.thechocolaterabbit.onlineorders",
-  "versionCode": 2,
-  "versionName": "1.0.1",
+  "versionCode": 3,
+  "versionName": "1.0.2",
   "minSdk": 26,
-  "apkUrl": "https://github.com/ComputerGarage1837/the-chocolate-rabbit-online-orders/releases/download/v1.0.1/The-Chocolate-Rabbit-Online-Orders.apk",
-  "sha256": "e84cf03ae91d1a20157d6eabcb40cba7a983f8ebfaba825b51410e39545c4174",
+  "apkUrl": "https://github.com/ComputerGarage1837/the-chocolate-rabbit-online-orders/releases/download/v1.0.2/The-Chocolate-Rabbit-Online-Orders.apk",
+  "sha256": "ff668f7113476b8dfdb769f4f4fbec1565313827339c5e8e1abadddba83346fb",
   "certificateSha256": "759a2c04ae79c2037eb82b7503d3bd29a79b61b23e008c2d49f0561947486e7b",
-  "sizeBytes": 657183,
-  "publishedAt": "2026-09-22T00:00:00Z",
-  "releaseNotes": "The Chocolate Rabbit logo now displays in the app. Order cards and details fit narrow phones, and content stays clear of the clock, camera cutout, and bottom navigation controls."
+  "sizeBytes": 671146,
+  "publishedAt": "2026-09-23T19:15:00Z",
+  "releaseNotes": "Adds Square pre-authorization capture for eligible full-amount orders, with confirmation and safeguards against expired, changed, or already captured payments. Requires the matching v1.0.2 WordPress companion plugin."
 }
