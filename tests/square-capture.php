@@ -55,6 +55,7 @@ class WC_Order {
 class FakeCaptureHandler {
     public bool $captured = false;
     public bool $eligible = true;
+    public bool $fail = false;
     public float $authorized = 42.50;
     public int $calls = 0;
     public function is_order_captured(WC_Order $order): bool { return $this->captured; }
@@ -62,6 +63,7 @@ class FakeCaptureHandler {
     public function order_can_be_captured(WC_Order $order): bool { return $this->eligible && !$this->captured; }
     public function perform_capture(WC_Order $order, float $amount): array {
         ++$this->calls;
+        if ($this->fail) return ['success' => false, 'message' => 'Gateway declined'];
         if ($amount !== $this->authorized) return ['success' => false, 'message' => 'Wrong amount'];
         $this->captured = true;
         $order->status = 'processing';
@@ -122,5 +124,16 @@ $handler = setup();
 $handler->eligible = false;
 $expired = TCR_Orders_App::capture(new WP_REST_Request(17));
 check($expired instanceof WP_Error && $handler->calls === 0, 'Expired authorization reached Square');
+
+$handler = setup();
+$handler->fail = true;
+$failed = TCR_Orders_App::capture(new WP_REST_Request(17));
+check($failed instanceof WP_Error && $failed->code === 'capture_failed', 'Gateway failure was not reported');
+check(!isset($GLOBALS['options']['tcr_orders_capture_lock_17']), 'Capture lock was not released after failure');
+
+$handler = setup();
+$GLOBALS['options']['tcr_orders_capture_lock_17'] = time();
+$busy = TCR_Orders_App::capture(new WP_REST_Request(17));
+check($busy instanceof WP_Error && $busy->code === 'capture_busy' && $handler->calls === 0, 'Concurrent capture reached Square');
 
 echo "Square capture checks passed\n";
