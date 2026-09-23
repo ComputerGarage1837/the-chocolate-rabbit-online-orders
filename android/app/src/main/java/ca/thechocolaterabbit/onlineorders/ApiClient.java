@@ -60,7 +60,9 @@ final class ApiClient {
         try { response = text.isEmpty() ? new JSONObject() : new JSONObject(text); }
         catch (Exception malformed) { throw new IllegalStateException("The store returned an unreadable response."); }
         if (status < 200 || status >= 300) {
-            if (status == 401 && authenticated) store.clear();
+            if (status == 401 && authenticated) {
+                throw new IllegalStateException("The store rejected the saved pairing, but it was not erased. Retry when the site is available; re-pair only if this continues.");
+            }
             throw new IllegalStateException(response.optString("message", "The store rejected this request (" + status + ")."));
         }
         return response;
@@ -91,4 +93,3 @@ final class ApiClient {
         }
     }
 }
-

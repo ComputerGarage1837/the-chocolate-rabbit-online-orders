@@ -28,9 +28,8 @@ final class SecureStore {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)));
             return new JSONObject(new String(cipher.doFinal(Base64.decode(value, Base64.NO_WRAP)), StandardCharsets.UTF_8));
-        } catch (Exception ignored) {
-            clear();
-            return new JSONObject();
+        } catch (Exception error) {
+            throw new IllegalStateException("Saved pairing could not be read. Retry before pairing again.", error);
         }
     }
 
@@ -60,4 +59,3 @@ final class SecureStore {
         return generator.generateKey();
     }
 }
-
