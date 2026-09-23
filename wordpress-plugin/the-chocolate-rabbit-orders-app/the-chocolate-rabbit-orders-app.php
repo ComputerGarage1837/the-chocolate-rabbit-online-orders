@@ -2,7 +2,7 @@
 /**
  * Plugin Name: The Chocolate Rabbit Orders App
  * Description: Secure owner-app access to WooCommerce orders, refunds, and new-order push notifications.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: Computer Garage
  * Requires Plugins: woocommerce
  */
@@ -36,6 +36,7 @@ final class TCR_Orders_App {
         register_rest_route(self::NS, '/orders', ['methods' => 'GET', 'callback' => [self::class, 'orders'], 'permission_callback' => [self::class, 'authorized']]);
         register_rest_route(self::NS, '/orders/(?P<id>\d+)', ['methods' => 'GET', 'callback' => [self::class, 'order'], 'permission_callback' => [self::class, 'authorized']]);
         register_rest_route(self::NS, '/orders/(?P<id>\d+)/status', ['methods' => 'POST', 'callback' => [self::class, 'status'], 'permission_callback' => [self::class, 'authorized']]);
+        register_rest_route(self::NS, '/orders/(?P<id>\d+)/capture', ['methods' => 'POST', 'callback' => [self::class, 'capture'], 'permission_callback' => [self::class, 'authorized']]);
         register_rest_route(self::NS, '/orders/(?P<id>\d+)/notes', ['methods' => 'POST', 'callback' => [self::class, 'note'], 'permission_callback' => [self::class, 'authorized']]);
         register_rest_route(self::NS, '/orders/(?P<id>\d+)/refunds', ['methods' => 'POST', 'callback' => [self::class, 'refund'], 'permission_callback' => [self::class, 'authorized']]);
     }
@@ -109,8 +110,70 @@ final class TCR_Orders_App {
         $order = self::get_order((int)$request['id']); if (is_wp_error($order)) return $order;
         $status = sanitize_key((string)(self::body($request)['status'] ?? ''));
         if (!array_key_exists('wc-' . $status, wc_get_order_statuses())) return new WP_Error('invalid_status', 'Invalid order status.', ['status' => 400]);
+        if (in_array($status, ['processing', 'completed'], true) && self::square_capture_state($order)['requiresCapture']) {
+            return new WP_Error('capture_required', 'Capture the Square authorization before marking this order paid.', ['status' => 409]);
+        }
         $order->update_status($status, 'Status changed from The Chocolate Rabbit Online Orders app.', true);
         return rest_ensure_response(['order' => self::order_detail($order)]);
+    }
+
+    public static function capture(WP_REST_Request $request) {
+        $order = self::get_order((int)$request['id']); if (is_wp_error($order)) return $order;
+        $state = self::square_capture_state($order);
+        if (!$state['available']) return new WP_Error('capture_unavailable', $state['message'] ?: 'This order has no capturable Square authorization.', ['status' => 409]);
+
+        $lock = 'tcr_orders_capture_lock_' . $order->get_id();
+        if (!add_option($lock, time(), '', false)) {
+            if ((int)get_option($lock, 0) > time() - 120) return new WP_Error('capture_busy', 'A capture is already in progress. Refresh the order before retrying.', ['status' => 409]);
+            delete_option($lock);
+            if (!add_option($lock, time(), '', false)) return new WP_Error('capture_busy', 'A capture is already in progress.', ['status' => 409]);
+        }
+        try {
+            $order = self::get_order((int)$request['id']);
+            if (is_wp_error($order)) return $order;
+            $state = self::square_capture_state($order);
+            if (!$state['available']) return new WP_Error('capture_unavailable', $state['message'] ?: 'The Square authorization is no longer capturable.', ['status' => 409]);
+            $gateway = self::square_gateway();
+            $result = $gateway->get_capture_handler()->perform_capture($order, (float)$order->get_total());
+            if (empty($result['success'])) return new WP_Error('capture_failed', wp_strip_all_tags((string)($result['message'] ?? 'Square declined the capture.')), ['status' => 409]);
+            $order = wc_get_order($order->get_id());
+            if (!$order || !$gateway->get_capture_handler()->is_order_captured($order)) {
+                return new WP_Error('capture_unconfirmed', 'Square returned success but the order was not confirmed. Check WooCommerce and Square before retrying.', ['status' => 502]);
+            }
+            return rest_ensure_response(['captured' => true, 'order' => self::order_detail($order)]);
+        } catch (Throwable $error) {
+            return new WP_Error('capture_uncertain', 'The capture result could not be confirmed. Check WooCommerce and Square before retrying.', ['status' => 502]);
+        } finally {
+            delete_option($lock);
+        }
+    }
+
+    private static function square_gateway() {
+        if (!function_exists('WC') || !WC()->payment_gateways()) return null;
+        $gateways = WC()->payment_gateways()->payment_gateways();
+        $gateway = $gateways['square_credit_card'] ?? null;
+        return is_object($gateway) && method_exists($gateway, 'get_capture_handler') ? $gateway : null;
+    }
+
+    private static function square_capture_state(WC_Order $order): array {
+        $state = ['available' => false, 'requiresCapture' => false, 'amount' => (float)$order->get_total(), 'message' => ''];
+        if ($order->get_payment_method() !== 'square_credit_card' || $order->get_status() !== 'on-hold' || $order->get_transaction_id() === '') return $state;
+        $state['requiresCapture'] = true;
+        $gateway = self::square_gateway();
+        if (!$gateway) { $state['message'] = 'The WooCommerce Square gateway is unavailable.'; return $state; }
+        $handler = $gateway->get_capture_handler();
+        if (!$handler || !method_exists($handler, 'order_can_be_captured') || !method_exists($handler, 'get_order_authorization_amount') || !method_exists($handler, 'is_order_captured')) {
+            $state['message'] = 'This Square version does not expose the capture controls needed by the app.';
+            return $state;
+        }
+        if ($handler->is_order_captured($order)) { $state['message'] = 'This payment has already been partly captured. Review it in WooCommerce.'; return $state; }
+        if (abs((float)$handler->get_order_authorization_amount($order) - (float)$order->get_total()) > 0.005) {
+            $state['message'] = 'The order total differs from its authorization. Review and capture it in WooCommerce.';
+            return $state;
+        }
+        if (!$handler->order_can_be_captured($order)) { $state['message'] = 'The Square authorization has expired or cannot be captured. Review it in WooCommerce.'; return $state; }
+        $state['available'] = true;
+        return $state;
     }
 
     public static function note(WP_REST_Request $request) {
@@ -164,7 +227,7 @@ final class TCR_Orders_App {
         }
         $statuses = []; foreach (wc_get_order_statuses() as $key => $label) $statuses[substr($key, 3)] = $label;
         $billing = array_filter([$order->get_billing_address_1(), $order->get_billing_address_2(), trim($order->get_billing_city() . ' ' . $order->get_billing_state() . ' ' . $order->get_billing_postcode()), $order->get_billing_country()]);
-        return array_merge(self::order_summary($order), ['paid' => $order->is_paid(), 'transactionId' => $order->get_transaction_id(), 'refunded' => (float)$order->get_total_refunded(),
+        return array_merge(self::order_summary($order), ['paid' => $order->is_paid(), 'capture' => self::square_capture_state($order), 'transactionId' => $order->get_transaction_id(), 'refunded' => (float)$order->get_total_refunded(),
             'refundable' => max(0.0, (float)$order->get_total() - (float)$order->get_total_refunded()), 'items' => $items, 'totals' => $totals, 'statuses' => $statuses,
             'customer' => ['name' => trim($order->get_formatted_billing_full_name()) ?: 'Guest', 'email' => $order->get_billing_email(), 'phone' => $order->get_billing_phone(), 'billing' => implode("\n", $billing)]]);
     }

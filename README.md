@@ -8,6 +8,7 @@ Owner-only Android order manager for The Chocolate Rabbit WooCommerce store.
 - Secure one-time pairing. WooCommerce API keys are never embedded in the APK.
 - Order list, status filters, search, order details, payment information, private notes, and status changes.
 - Full or partial WooCommerce refunds, including an explicit choice to refund through the original payment gateway.
+- Full capture of eligible pre-authorized WooCommerce Square card charges through Square's gateway.
 - Firebase push notifications for new orders.
 - Visible **Update** button with signed APK, size, and SHA-256 verification.
 - Companion WordPress/WooCommerce plugin.
@@ -30,6 +31,12 @@ The four public Android values come from Firebase project settings. Create the p
 ## Refunds
 
 The app limits refunds to the remaining refundable order balance. If **Refund the payment through the gateway** is selected, WooCommerce asks the original payment gateway to return the money. Gateway support and credentials still control whether that succeeds. Inventory is not automatically restocked from the app.
+
+## Square pre-authorizations
+
+On an eligible **On hold** Square card order, tap **Capture charge through Square** to capture the full authorized amount. The button is unavailable if Square reports an expired or previously captured authorization, or if the order total differs from the authorization. The app blocks a normal status change to Processing or Completed while the authorization is uncaptured.
+
+Build checks use a simulated gateway and do not charge the live Square account. Before relying on this in production, test a controlled authorization and verify the WooCommerce order note and Square payment status. Square's WooCommerce extension says authorizations expire after six days.
 
 ## Project folders
 

@@ -58,6 +58,7 @@ public final class OrdersBridge {
                 return api.get("/wp-json/tcr-orders/v1/orders?page=" + page + "&status=" + encode(status) + "&search=" + encode(search));
             }
             case "order": return api.get("/wp-json/tcr-orders/v1/orders/" + orderId(payload));
+            case "capture": return api.post("/wp-json/tcr-orders/v1/orders/" + orderId(payload) + "/capture", new JSONObject());
             case "status": return api.post("/wp-json/tcr-orders/v1/orders/" + orderId(payload) + "/status",
                     new JSONObject().put("status", allowed(payload.getString("status"), "pending", "processing", "on-hold", "completed", "cancelled", "refunded", "failed")));
             case "note": {
