@@ -2,7 +2,7 @@
 /**
  * Plugin Name: The Chocolate Rabbit Orders App
  * Description: Secure owner-app access to WooCommerce orders, refunds, and new-order push notifications.
- * Version: 1.0.2
+ * Version: 1.0.4
  * Author: Computer Garage
  * Requires Plugins: woocommerce
  */
@@ -13,16 +13,19 @@ if (!defined('ABSPATH')) exit;
 final class TCR_Orders_App {
     private const NS = 'tcr-orders/v1';
     private const TOKEN = 'tcr_orders_app_token_hash';
+    private const TOKENS = 'tcr_orders_app_token_hashes';
+    private const PIN = 'tcr_orders_app_pin_hash';
     private const PAIR = 'tcr_orders_pair_code';
     private const PAIR_EXPIRY = 'tcr_orders_pair_expiry';
     private const DEVICE = 'tcr_orders_fcm_token';
+    private const DEVICES = 'tcr_orders_fcm_tokens';
     private const FIREBASE = 'tcr_orders_firebase';
 
     public static function boot(): void {
         add_action('rest_api_init', [self::class, 'routes']);
         add_action('admin_menu', [self::class, 'menu']);
         add_action('admin_post_tcr_orders_save', [self::class, 'save_settings']);
-        add_action('admin_post_tcr_orders_pair', [self::class, 'new_pairing_code']);
+        add_action('admin_post_tcr_orders_pin', [self::class, 'save_pin']);
         add_action('admin_post_tcr_orders_revoke', [self::class, 'revoke']);
         add_action('admin_post_tcr_orders_test_push', [self::class, 'test_push']);
         add_action('woocommerce_new_order', [self::class, 'queue_notification'], 20, 1);
@@ -44,26 +47,36 @@ final class TCR_Orders_App {
     public static function authorized(WP_REST_Request $request): bool {
         $header = trim((string)$request->get_header('authorization'));
         if (!preg_match('/^Bearer\s+([A-Za-z0-9_-]{40,100})$/D', $header, $match)) return false;
+        $hash = self::token_hash($match[1]);
         $expected = (string)get_option(self::TOKEN, '');
-        return $expected !== '' && hash_equals($expected, self::token_hash($match[1]));
+        if ($expected !== '' && hash_equals($expected, $hash)) return true;
+        foreach ((array)get_option(self::TOKENS, []) as $device_hash) {
+            if (is_string($device_hash) && hash_equals($device_hash, $hash)) return true;
+        }
+        return false;
     }
 
     public static function pair(WP_REST_Request $request) {
         $ip = sanitize_text_field((string)($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
         $limit_key = 'tcr_pair_' . substr(hash('sha256', $ip), 0, 32);
         $attempts = (int)get_transient($limit_key);
-        if ($attempts >= 8) return new WP_Error('too_many_attempts', 'Too many pairing attempts. Wait 15 minutes and try again.', ['status' => 429]);
-        set_transient($limit_key, $attempts + 1, 15 * MINUTE_IN_SECONDS);
+        $global_key = 'tcr_orders_pin_failures';
+        if ($attempts >= 5 || (int)get_transient($global_key) >= 25) {
+            return new WP_Error('too_many_attempts', 'Too many PIN attempts. Try again later.', ['status' => 429]);
+        }
         $body = self::body($request);
-        $code = preg_replace('/\D/', '', (string)($body['code'] ?? ''));
-        $saved = (string)get_option(self::PAIR, '');
-        $expiry = (int)get_option(self::PAIR_EXPIRY, 0);
-        if (strlen($code) !== 8 || $expiry < time() || $saved === '' || !hash_equals($saved, self::pair_hash($code))) {
-            return new WP_Error('invalid_pairing_code', 'That pairing code is invalid or expired.', ['status' => 401]);
+        $code = is_string($body['code'] ?? null) ? trim($body['code']) : '';
+        $saved = (string)get_option(self::PIN, '');
+        if ($saved === '') return new WP_Error('pin_not_configured', 'The owner PIN has not been set in WooCommerce → Orders App.', ['status' => 503]);
+        if (!preg_match('/^[0-9]{4}$/D', $code) || !wp_check_password($code, $saved)) {
+            set_transient($limit_key, $attempts + 1, 15 * MINUTE_IN_SECONDS);
+            set_transient($global_key, (int)get_transient($global_key) + 1, DAY_IN_SECONDS);
+            return new WP_Error('invalid_pin', 'Incorrect PIN.', ['status' => 401]);
         }
         $token = rtrim(strtr(base64_encode(random_bytes(48)), '+/', '-_'), '=');
-        update_option(self::TOKEN, self::token_hash($token), false);
-        delete_option(self::PAIR); delete_option(self::PAIR_EXPIRY); delete_option(self::DEVICE);
+        $tokens = (array)get_option(self::TOKENS, []);
+        $tokens[] = self::token_hash($token);
+        update_option(self::TOKENS, $tokens, false);
         delete_transient($limit_key);
         return rest_ensure_response(['token' => $token, 'storeName' => get_bloginfo('name')]);
     }
@@ -78,7 +91,9 @@ final class TCR_Orders_App {
     public static function register_push(WP_REST_Request $request) {
         $token = trim((string)(self::body($request)['token'] ?? ''));
         if (strlen($token) < 20 || strlen($token) > 4096 || preg_match('/[\x00-\x20]/', $token)) return new WP_Error('invalid_token', 'Invalid notification token.', ['status' => 400]);
-        update_option(self::DEVICE, $token, false);
+        $devices = (array)get_option(self::DEVICES, []);
+        if (!in_array($token, $devices, true)) $devices[] = $token;
+        update_option(self::DEVICES, $devices, false);
         return rest_ensure_response(['registered' => true]);
     }
 
@@ -216,14 +231,16 @@ final class TCR_Orders_App {
                 $label = wp_strip_all_tags((string)$entry->display_key); $value = wp_strip_all_tags((string)$entry->display_value);
                 if ($label !== '' && $value !== '') $meta[] = ['label' => $label, 'value' => $value];
             }
-            $items[] = ['name' => $item->get_name(), 'quantity' => $item->get_quantity(), 'total' => (float)$order->get_line_total($item, true, false), 'meta' => $meta];
+            $items[] = ['name' => $item->get_name(), 'quantity' => $item->get_quantity(), 'total' => (float)$order->get_line_total($item, false, false), 'meta' => $meta];
         }
         $totals = [];
-        foreach ($order->get_order_item_totals() as $key => $row) {
-            if ($key === 'order_total') continue;
-            $raw = wp_strip_all_tags((string)$row['value']);
-            preg_match('/-?[0-9][0-9,]*(?:\.[0-9]+)?/', $raw, $match);
-            $totals[] = ['label' => wp_strip_all_tags((string)$row['label']), 'value' => isset($match[0]) ? (float)str_replace(',', '', $match[0]) : 0];
+        $totals[] = ['label' => 'Subtotal', 'value' => (float)$order->get_subtotal()];
+        $discount = (float)$order->get_total_discount();
+        if ($discount > 0) $totals[] = ['label' => 'Discount', 'value' => -$discount];
+        if ($order->get_shipping_methods()) $totals[] = ['label' => 'Shipping', 'value' => (float)$order->get_shipping_total()];
+        foreach ($order->get_fees() as $fee) $totals[] = ['label' => $fee->get_name(), 'value' => (float)$fee->get_total()];
+        foreach ($order->get_taxes() as $tax) {
+            $totals[] = ['label' => $tax->get_label(), 'value' => (float)$tax->get_tax_total() + (float)$tax->get_shipping_tax_total()];
         }
         $statuses = []; foreach (wc_get_order_statuses() as $key => $label) $statuses[substr($key, 3)] = $label;
         $billing = array_filter([$order->get_billing_address_1(), $order->get_billing_address_2(), trim($order->get_billing_city() . ' ' . $order->get_billing_state() . ' ' . $order->get_billing_postcode()), $order->get_billing_country()]);
@@ -241,7 +258,17 @@ final class TCR_Orders_App {
     private static function body(WP_REST_Request $request): array { $value = $request->get_json_params(); return is_array($value) ? $value : []; }
     private static function woocommerce_missing(): WP_Error { return new WP_Error('woocommerce_unavailable', 'WooCommerce is unavailable.', ['status' => 503]); }
     private static function token_hash(string $token): string { return hash_hmac('sha256', $token, wp_salt('auth')); }
-    private static function pair_hash(string $code): string { return hash_hmac('sha256', $code, wp_salt('nonce')); }
+    private static function push_tokens(): array {
+        $tokens = (array)get_option(self::DEVICES, []);
+        $legacy = (string)get_option(self::DEVICE, '');
+        if ($legacy !== '') $tokens[] = $legacy;
+        return array_values(array_unique(array_filter($tokens, static fn($token) => is_string($token) && $token !== '')));
+    }
+    private static function forget_push_token(string $token): void {
+        if ((string)get_option(self::DEVICE, '') === $token) delete_option(self::DEVICE);
+        $tokens = array_values(array_diff((array)get_option(self::DEVICES, []), [$token]));
+        update_option(self::DEVICES, $tokens, false);
+    }
 
     public static function queue_notification(int $order_id): void {
         if (!wp_next_scheduled('tcr_orders_send_new_order_push', [$order_id])) wp_schedule_single_event(time() + 8, 'tcr_orders_send_new_order_push', [$order_id]);
@@ -249,13 +276,15 @@ final class TCR_Orders_App {
 
     public static function send_new_order_notification(int $order_id): void {
         $order = function_exists('wc_get_order') ? wc_get_order($order_id) : false;
-        $device = (string)get_option(self::DEVICE, ''); $firebase = self::firebase();
-        if (!$order || $device === '' || !self::firebase_ready($firebase)) return;
+        $devices = self::push_tokens(); $firebase = self::firebase();
+        if (!$order || !$devices || !self::firebase_ready($firebase)) return;
         $title = 'New order #' . $order->get_order_number();
         $name = trim($order->get_formatted_billing_full_name()) ?: 'Guest';
         $body = $name . ' · ' . html_entity_decode(wp_strip_all_tags($order->get_formatted_order_total()), ENT_QUOTES, 'UTF-8');
-        $result = self::fcm_send($device, ['data' => ['orderId' => (string)$order_id, 'title' => $title, 'body' => $body], 'android' => ['priority' => 'high'] ], $firebase);
-        if (($result['invalid'] ?? false) === true) delete_option(self::DEVICE);
+        foreach ($devices as $device) {
+            $result = self::fcm_send($device, ['data' => ['orderId' => (string)$order_id, 'title' => $title, 'body' => $body], 'android' => ['priority' => 'high'] ], $firebase);
+            if (($result['invalid'] ?? false) === true) self::forget_push_token($device);
+        }
     }
 
     private static function firebase(): array { $value = get_option(self::FIREBASE, []); return is_array($value) ? $value : []; }
@@ -292,21 +321,22 @@ final class TCR_Orders_App {
     public static function menu(): void { add_submenu_page('woocommerce', 'Orders App', 'Orders App', 'manage_woocommerce', 'tcr-orders-app', [self::class, 'page']); }
     public static function page(): void {
         if (!current_user_can('manage_woocommerce')) return;
-        $firebase = self::firebase(); $public = $firebase['public'] ?? []; $expiry = (int)get_option(self::PAIR_EXPIRY, 0); $paired = (string)get_option(self::TOKEN, '') !== '';
-        $code = get_transient('tcr_orders_pair_display');
+        $firebase = self::firebase(); $public = $firebase['public'] ?? [];
+        $devices = count((array)get_option(self::TOKENS, [])) + ((string)get_option(self::TOKEN, '') !== '' ? 1 : 0);
+        $pin_set = (string)get_option(self::PIN, '') !== '';
         ?>
         <div class="wrap"><h1>The Chocolate Rabbit Online Orders</h1>
         <?php if (isset($_GET['updated'])): ?><div class="notice notice-success"><p>Settings saved.</p></div><?php endif; ?>
-        <?php if (isset($_GET['test_push'])): ?><div class="notice <?php echo $_GET['test_push'] === 'sent' ? 'notice-success' : 'notice-error'; ?>"><p><?php echo $_GET['test_push'] === 'sent' ? 'Test notification sent to the paired phone.' : 'Test notification could not be sent. Check Firebase settings and the paired phone.'; ?></p></div><?php endif; ?>
-        <div class="card" style="max-width:760px;padding:20px"><h2>Owner phone</h2><p>Status: <strong><?php echo $paired ? 'Paired' : 'Not paired'; ?></strong></p>
-        <?php if (is_string($code) && $expiry > time()): ?><p>Enter this one-time code in the app. It expires in 10 minutes.</p><div style="font-size:34px;font-weight:800;letter-spacing:.18em;background:#fff4c8;padding:18px;display:inline-block"><?php echo esc_html($code); ?></div><?php endif; ?>
-        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:16px"><?php wp_nonce_field('tcr_orders_pair'); ?><input type="hidden" name="action" value="tcr_orders_pair"><button class="button button-primary">Generate new pairing code</button></form>
-        <?php if ($paired): ?><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:10px" onsubmit="return confirm('Revoke the paired phone?')"><?php wp_nonce_field('tcr_orders_revoke'); ?><input type="hidden" name="action" value="tcr_orders_revoke"><button class="button">Revoke paired phone</button></form><?php endif; ?></div>
+        <?php if (isset($_GET['test_push'])): ?><div class="notice <?php echo $_GET['test_push'] === 'sent' ? 'notice-success' : 'notice-error'; ?>"><p><?php echo $_GET['test_push'] === 'sent' ? 'Test notification sent to connected devices.' : 'Test notification could not be sent. Check Firebase settings and device registration.'; ?></p></div><?php endif; ?>
+        <div class="card" style="max-width:760px;padding:20px"><h2>Owner devices</h2><p>Connected devices: <strong><?php echo esc_html((string)$devices); ?></strong>. New devices enter the PIN once; existing devices stay connected.</p>
+        <p>PIN: <strong><?php echo $pin_set ? 'Set' : 'Not set'; ?></strong>. Use a private PIN; this grants access to orders, captures, and refunds. Changing it does not disconnect existing devices.</p>
+        <?php if (current_user_can('manage_options')): ?><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:16px"><?php wp_nonce_field('tcr_orders_pin'); ?><input type="hidden" name="action" value="tcr_orders_pin"><label for="tcr_orders_pin">Set 4-digit PIN</label><p><input id="tcr_orders_pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="new-password" required> <button class="button button-primary">Save PIN</button></p></form>
+        <?php if ($devices): ?><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:10px" onsubmit="return confirm('Revoke access for all connected devices?')"><?php wp_nonce_field('tcr_orders_revoke'); ?><input type="hidden" name="action" value="tcr_orders_revoke"><button class="button">Revoke all devices</button></form><?php endif; ?><?php endif; ?></div>
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="card" style="max-width:760px;padding:20px;margin-top:18px"><?php wp_nonce_field('tcr_orders_save'); ?><input type="hidden" name="action" value="tcr_orders_save"><h2>Push notifications (Firebase)</h2><p>Create an Android app in Firebase for package <code>ca.thechocolaterabbit.onlineorders</code>. Paste the four public Android values and the service-account JSON below. The private service account stays only in WordPress.</p>
         <?php foreach (['apiKey'=>'API key','applicationId'=>'Application ID','projectId'=>'Project ID','senderId'=>'Sender ID'] as $key=>$label): ?><p><label><strong><?php echo esc_html($label); ?></strong><br><input class="regular-text" name="public[<?php echo esc_attr($key); ?>]" value="<?php echo esc_attr((string)($public[$key] ?? '')); ?>"></label></p><?php endforeach; ?>
         <p><label><strong>Firebase service-account JSON</strong><br><textarea name="service_json" rows="10" class="large-text code" placeholder="Paste the full JSON file here. Leave blank to keep the saved credential."></textarea></label></p><p><button class="button button-primary">Save notification settings</button></p></form>
         <div class="card" style="max-width:760px;padding:20px;margin-top:18px"><h2>Notification check</h2>
-        <p>Firebase: <strong><?php echo self::firebase_ready($firebase) ? 'Configured' : 'Needs setup'; ?></strong><br>Owner phone: <strong><?php echo get_option(self::DEVICE, '') ? 'Registered for push' : 'Not registered for push'; ?></strong></p>
+        <p>Firebase: <strong><?php echo self::firebase_ready($firebase) ? 'Configured' : 'Needs setup'; ?></strong><br>Devices registered for push: <strong><?php echo esc_html((string)count(self::push_tokens())); ?></strong></p>
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><?php wp_nonce_field('tcr_orders_test_push'); ?><input type="hidden" name="action" value="tcr_orders_test_push"><button class="button button-primary" <?php disabled(!self::firebase_ready($firebase) || !get_option(self::DEVICE, '')); ?>>Send test notification</button></form></div></div>
         <?php
     }
@@ -324,21 +354,24 @@ final class TCR_Orders_App {
     public static function test_push(): void {
         if (!current_user_can('manage_woocommerce')) wp_die('Forbidden', 403);
         check_admin_referer('tcr_orders_test_push');
-        $firebase = self::firebase(); $device = (string)get_option(self::DEVICE, '');
-        $result = $device !== '' && self::firebase_ready($firebase)
-            ? self::fcm_send($device, ['data' => ['title' => 'Chocolate Rabbit test', 'body' => 'New-order notifications are ready.', 'orderId' => ''], 'android' => ['priority' => 'high']], $firebase)
-            : ['ok' => false];
-        if (!empty($result['invalid'])) delete_option(self::DEVICE);
-        wp_safe_redirect(admin_url('admin.php?page=tcr-orders-app&test_push=' . (!empty($result['ok']) ? 'sent' : 'failed'))); exit;
+        $firebase = self::firebase(); $sent = false;
+        if (self::firebase_ready($firebase)) foreach (self::push_tokens() as $device) {
+            $result = self::fcm_send($device, ['data' => ['title' => 'Chocolate Rabbit test', 'body' => 'New-order notifications are ready.', 'orderId' => ''], 'android' => ['priority' => 'high']], $firebase);
+            if (!empty($result['ok'])) $sent = true;
+            if (!empty($result['invalid'])) self::forget_push_token($device);
+        }
+        wp_safe_redirect(admin_url('admin.php?page=tcr-orders-app&test_push=' . ($sent ? 'sent' : 'failed'))); exit;
     }
-    public static function new_pairing_code(): void {
-        if (!current_user_can('manage_woocommerce')) wp_die('Forbidden', 403); check_admin_referer('tcr_orders_pair');
-        $code = (string)random_int(10000000, 99999999); update_option(self::PAIR, self::pair_hash($code), false); update_option(self::PAIR_EXPIRY, time() + 10 * MINUTE_IN_SECONDS, false); set_transient('tcr_orders_pair_display', $code, 10 * MINUTE_IN_SECONDS);
+    public static function save_pin(): void {
+        if (!current_user_can('manage_options')) wp_die('Forbidden', '', ['response' => 403]); check_admin_referer('tcr_orders_pin');
+        $pin = is_string($_POST['pin'] ?? null) ? trim(wp_unslash($_POST['pin'])) : '';
+        if (!preg_match('/^[0-9]{4}$/D', $pin)) wp_die('PIN must be exactly four digits.', '', ['response' => 400]);
+        update_option(self::PIN, wp_hash_password($pin), false);
         wp_safe_redirect(admin_url('admin.php?page=tcr-orders-app')); exit;
     }
     public static function revoke(): void {
-        if (!current_user_can('manage_woocommerce')) wp_die('Forbidden', 403); check_admin_referer('tcr_orders_revoke');
-        delete_option(self::TOKEN); delete_option(self::DEVICE); delete_option(self::PAIR); delete_option(self::PAIR_EXPIRY); delete_transient('tcr_orders_pair_display');
+        if (!current_user_can('manage_options')) wp_die('Forbidden', '', ['response' => 403]); check_admin_referer('tcr_orders_revoke');
+        delete_option(self::TOKEN); delete_option(self::TOKENS); delete_option(self::DEVICE); delete_option(self::DEVICES); delete_option(self::PAIR); delete_option(self::PAIR_EXPIRY); delete_transient('tcr_orders_pair_display');
         wp_safe_redirect(admin_url('admin.php?page=tcr-orders-app')); exit;
     }
 }

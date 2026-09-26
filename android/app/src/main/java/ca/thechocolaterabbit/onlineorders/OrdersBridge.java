@@ -45,7 +45,7 @@ public final class OrdersBridge {
             case "state": return new JSONObject().put("paired", api.store().isPaired()).put("storeUrl", api.store().storeUrl())
                     .put("version", BuildConfig.VERSION_NAME);
             case "pair": {
-                JSONObject paired = api.pair(payload.getString("storeUrl"), payload.getString("code"));
+                JSONObject paired = api.pair("https://thechocolaterabbit.net", payload.getString("code"));
                 PushManager.configure(activity);
                 return paired.put("paired", true).put("storeUrl", api.store().storeUrl());
             }

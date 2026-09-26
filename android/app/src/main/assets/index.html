@@ -57,13 +57,12 @@
 <main>
   <section id="setup" class="hidden">
     <div class="card">
-      <div class="eyebrow">Owner setup</div><h1>Pair this phone</h1>
-      <p class="muted">In WordPress, open <b>WooCommerce → Orders App</b>, generate a one-time pairing code, then enter it here.</p>
+      <div class="eyebrow">Owner setup</div><h1>Enter owner PIN</h1>
+      <p class="muted">Enter the PIN once on this device. You will stay signed in after app updates.</p>
       <div id="setupNotice"></div>
-      <label for="storeUrl">Store website</label><input id="storeUrl" inputmode="url" value="https://thechocolaterabbit.net" autocomplete="url">
-      <label for="pairCode">Pairing code</label><input id="pairCode" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="12345678">
-      <button class="primary wide" id="pairButton" style="margin-top:16px">Pair owner phone</button>
-      <p class="muted" style="font-size:12px">The pairing token is encrypted by Android and can be revoked from WordPress at any time.</p>
+      <label for="pairCode">4-digit PIN</label><input id="pairCode" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" placeholder="••••">
+      <button class="primary wide" id="pairButton" style="margin-top:16px">Sign in</button>
+      <p class="muted" style="font-size:12px">This device stays signed in until you choose Unpair or revoke access in WordPress.</p>
     </div>
   </section>
 
@@ -94,10 +93,10 @@
   function setBusy(button,busy,label){button.disabled=busy;button.textContent=busy?'Please wait…':label}
   async function boot(){try{const s=await call('state');$('setup').classList.toggle('hidden',s.paired);$('ordersApp').classList.toggle('hidden',!s.paired);if(s.paired)loadOrders(true)}catch(e){$('setup').classList.remove('hidden');notice($('setupNotice'),e.message)}}
   $('updateButton').onclick=()=>call('checkUpdate');
-  $('pairButton').onclick=async()=>{const b=$('pairButton');setBusy(b,true,'Pair owner phone');notice($('setupNotice'),'');try{await call('pair',{storeUrl:$('storeUrl').value,code:$('pairCode').value});$('pairCode').value='';$('setup').classList.add('hidden');$('ordersApp').classList.remove('hidden');loadOrders(true)}catch(e){notice($('setupNotice'),e.message)}finally{setBusy(b,false,'Pair owner phone')}};
+  $('pairButton').onclick=async()=>{const b=$('pairButton'),code=$('pairCode').value.trim();notice($('setupNotice'),'');if(!/^[0-9]{4}$/.test(code)){notice($('setupNotice'),'Enter the 4-digit PIN.');return}setBusy(b,true,'Sign in');try{await call('pair',{code});$('pairCode').value='';$('setup').classList.add('hidden');$('ordersApp').classList.remove('hidden');loadOrders(true)}catch(e){notice($('setupNotice'),e.message)}finally{setBusy(b,false,'Sign in')}};
   $('refreshButton').onclick=()=>loadOrders(true);$('status').onchange=()=>loadOrders(true);$('search').onkeydown=e=>{if(e.key==='Enter')loadOrders(true)};
   $('moreButton').onclick=()=>{page++;loadOrders(false)};
-  $('unpairButton').onclick=async()=>{if(!confirm('Unpair this phone? You will need a new code from WordPress to reconnect.'))return;await call('logout');$('ordersApp').classList.add('hidden');$('setup').classList.remove('hidden')};
+  $('unpairButton').onclick=async()=>{if(!confirm('Unpair this phone? You will need the owner PIN to reconnect.'))return;await call('logout');$('ordersApp').classList.add('hidden');$('setup').classList.remove('hidden')};
   async function loadOrders(reset){if(loading)return;loading=true;if(reset){page=1;$('orders').innerHTML='<div class="spinner"></div>'}notice($('ordersNotice'),'');try{const data=await call('orders',{page,status:$('status').value,search:$('search').value});renderOrders(data,reset)}catch(e){if(e.message.includes('not paired')||e.message.includes('pair'))return boot();notice($('ordersNotice'),e.message);if(reset)$('orders').innerHTML='<div class="empty">Orders could not be loaded.</div>'}finally{loading=false}}
   function renderOrders(data,reset){const rows=Array.isArray(data.orders)?data.orders:[];const html=rows.map(o=>`<article class="order" role="button" tabindex="0" data-id="${Number(o.id)}"><div class="order-title">#${Number(o.number||o.id)} · ${esc(o.customer)}</div><div class="order-total">${esc(o.currencySymbol||'$')}${Number(o.total||0).toFixed(2)}</div><div class="order-meta"><span class="badge ${esc(o.status)}">${esc(o.statusLabel||o.status)}</span> · ${esc(o.date)}<br>${esc(o.itemSummary||'')}</div><div class="order-meta" style="text-align:right">${esc(o.paymentMethod||'')}<br>${o.shippingMethod?esc(o.shippingMethod):''}</div></article>`).join('');
     if(reset)$('orders').innerHTML=html||'<div class="empty">No orders match these filters.</div>';else $('orders').insertAdjacentHTML('beforeend',html);$('count').textContent=`${Number(data.total||rows.length)} total`;$('moreButton').classList.toggle('hidden',page>=Number(data.pages||1));document.querySelectorAll('.order').forEach(el=>{el.onclick=()=>openOrder(el.dataset.id);el.onkeydown=e=>{if(e.key==='Enter')openOrder(el.dataset.id)}})}

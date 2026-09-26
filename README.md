@@ -5,7 +5,7 @@ Owner-only Android order manager for The Chocolate Rabbit WooCommerce store.
 ## Included
 
 - Installable Android APK with The Chocolate Rabbit logo.
-- Secure one-time pairing. WooCommerce API keys are never embedded in the APK.
+- One-time owner PIN sign-in per device. Each phone keeps its own encrypted access token; WooCommerce API keys and the PIN are never embedded in the APK.
 - Order list, status filters, search, order details, payment information, private notes, and status changes.
 - Full or partial WooCommerce refunds, including an explicit choice to refund through the original payment gateway.
 - Full capture of eligible pre-authorized WooCommerce Square card charges through Square's gateway.
@@ -19,10 +19,10 @@ Owner-only Android order manager for The Chocolate Rabbit WooCommerce store.
 2. In Firebase, create an Android app with package name `ca.thechocolaterabbit.onlineorders`.
 3. In WordPress, open **WooCommerce → Orders App**. Enter the Firebase API key, app ID, project ID, sender ID, and service-account JSON.
 4. Install `The-Chocolate-Rabbit-Online-Orders.apk` on the owner’s Android phone.
-5. In **WooCommerce → Orders App**, generate a pairing code. Enter the store address and code in the app.
-6. Return to **WooCommerce → Orders App**. Confirm that Firebase is configured and the owner phone is registered, then use **Send test notification**.
+5. In **WooCommerce → Orders App**, privately set the 4-digit owner PIN. It is stored as a hash on the site, not in this public repository.
+6. Enter that PIN once on each Android device. Existing paired phones remain connected after the plugin update. Confirm Firebase and registered devices, then use **Send test notification**.
 
-The code expires after ten minutes and can be used once. Generating a new owner token replaces the old one. Use **Revoke paired phone** if the phone is lost or replaced.
+Each device receives a separate persistent token; adding a device does not disconnect another. Use **Revoke all devices** if a phone is lost or access must be reset. A shared 4-digit PIN is weak for an app that can capture and refund payments: keep it private, and change it immediately if disclosed.
 
 ## Firebase values
 
