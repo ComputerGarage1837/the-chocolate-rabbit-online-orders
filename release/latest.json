@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "packageName": "ca.thechocolaterabbit.onlineorders",
-  "versionCode": 4,
-  "versionName": "1.0.3",
+  "versionCode": 5,
+  "versionName": "1.0.4",
   "minSdk": 26,
-  "apkUrl": "https://github.com/ComputerGarage1837/the-chocolate-rabbit-online-orders/releases/download/v1.0.3/The-Chocolate-Rabbit-Online-Orders.apk",
-  "sha256": "1ebbc1ba3f6419b1c48082489108217196d37d76e767a79922d084e090d81073",
+  "apkUrl": "https://github.com/ComputerGarage1837/the-chocolate-rabbit-online-orders/releases/download/v1.0.4/The-Chocolate-Rabbit-Online-Orders.apk",
+  "sha256": "98b892896f68feaa4be15d75b76e69dce2b972883fcd73d62d8aebe004daeaa4",
   "certificateSha256": "759a2c04ae79c2037eb82b7503d3bd29a79b61b23e008c2d49f0561947486e7b",
   "sizeBytes": 671146,
-  "publishedAt": "2026-09-23T19:53:11Z",
-  "releaseNotes": "Keeps saved pairing after temporary authorization or secure-storage errors instead of erasing it. Install over the existing app; already erased pairing requires one new pairing. Square Capture still requires the v1.0.2 WordPress companion plugin."
+  "publishedAt": "2026-09-26T18:54:58Z",
+  "releaseNotes": "Adds persistent per-device PIN access and correct numeric order subtotal, tax, shipping, and total display. Install over the existing app to retain pairing. PIN sign-in requires the v1.0.4 WordPress companion plugin and private owner PIN setup."
 }
